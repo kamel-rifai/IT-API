@@ -5,17 +5,19 @@ from typing import Optional
 import models
 from db import engine, session
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 import uvicorn
 from starlette.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from passlib.context import CryptContext
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from secret import SECRET_KEY, ALGO
 from re import findall
 from icmplib  import ping , Host
 import os
 import asyncio
 from icmplib import async_ping
+
 
 
 app = FastAPI()
@@ -34,9 +36,10 @@ class DeviceBase(BaseModel):
     model:str
     floor:int
     place:str
-    Mac:str
-    IP:str
-    Notes:str 
+    cableNumber:Optional[str]
+    Mac:Optional[str]
+    IP:Optional[str]
+    Notes:Optional[str] 
     show:bool
     active:bool
 
@@ -46,6 +49,7 @@ class DeviceUpdate(BaseModel):
     model: Optional[str] = None
     floor: Optional[int] = None
     place: Optional[str] = None
+    cableNumber: Optional[str] = None
     Mac: Optional[str] = None
     IP: Optional[str] = None
     Notes: Optional[str] = None
@@ -56,9 +60,10 @@ class CameraBase(BaseModel):
     type:str
     model:str
     place:str
-    Mac:str
-    IP:str
-    Notes:str 
+    cableNumber:Optional[str]
+    Mac:Optional[str]
+    IP:Optional[str]
+    Notes:Optional[str] 
     show:bool
     Date:str
 
@@ -66,9 +71,9 @@ class TeloBase(BaseModel):
     type:str
     model:str
     place:str
-    Mac:str
-    IP:str
-    Notes:str 
+    Mac:Optional[str]
+    IP:Optional[str]
+    Notes:Optional[str] 
     show:bool
     Date:str
 
@@ -76,9 +81,9 @@ class AccessPointBase(BaseModel):
     type:str
     model:str
     place:str
-    Mac:str
-    IP:str
-    Notes:str 
+    Mac:Optional[str]
+    IP:Optional[str]
+    Notes:Optional[str] 
     show:bool
     Date:str
 
@@ -86,11 +91,39 @@ class CabinetBase(BaseModel):
     type:str
     model:str
     place:str
-    #Mac:str
-    #IP:str
-    Notes:str 
+    Notes:Optional[str] 
     show:bool
     Date:str
+
+class SwitchBase(BaseModel):
+    type:str
+    total_ports:int
+    name:str
+    model:str
+    floor:int
+    place:str
+    Mac:Optional[str]
+    IP:Optional[str]
+    Notes:Optional[str] 
+    show:bool
+    active:bool
+
+class PatchPanelBase(BaseModel):
+    title:str
+    show:bool
+
+class PortBase(BaseModel):
+    number:int
+    type:str
+    occupied:bool
+    device_id:int
+
+class PortUpdate(BaseModel):
+    number: Optional[int] = None
+    type: Optional[str] = None
+    occupied: Optional[bool] = None
+    device_id: Optional[int] = None
+
 
 def get_db():
     db = session()
@@ -107,7 +140,9 @@ db_dependency = Annotated[Session, Depends(get_db)]
 async def full_fetch(db: db_dependency):
 
     devices = db.query(models.Devices).all()
-    if not devices:
+    switches = db.query(models.Switches).all()
+    patch_panels = db.query(models.PatchPanels).all()
+    """if not devices:
         raise HTTPException(status_code=404, detail='There are no devices to show!')
 
     # --- This is the performant way ---
@@ -143,9 +178,13 @@ async def full_fetch(db: db_dependency):
     # 4. Commit all changes to the database ONCE
     db.commit()
     # ------------------------------------
-
-    return [
-    {
+""" 
+    print(devices)
+    print(switches)
+    print(patch_panels)
+    return {
+    "devices": [
+        {
         "id": d.id,
         "name": d.name,
         "IP": d.IP,
@@ -154,14 +193,39 @@ async def full_fetch(db: db_dependency):
         "type": d.type,
         "model": d.model,
         "place": d.place,
+        "cableNumber": d.place,
         "Mac": d.Mac,
         "Notes": d.Notes,
         "floor": d.floor,
         "Date": d.Date,
     }
     for d in devices
-]
-
+    ],"switches":[
+        {
+        "id": s.id,
+        "name": s.name,
+        "IP": s.IP,
+        "active": s.active,
+        "show": s.show,
+        "type": s.type,
+        "model": s.model,
+        "place": s.place,
+        "Mac": s.Mac,
+        "Notes": s.Notes,
+        "floor": s.floor,
+    }
+    for s in switches
+],"patchpanels":[
+    {
+        "id": p.id,
+        "title": p.title,
+        "unique_id": p.unique_id,
+        "show": p.show,
+        "ports": p.ports
+    }
+    for p in patch_panels
+    ]}
+    
 #--- this code is just for the process of adding devices to our database
 @app.post("/add", status_code=status.HTTP_201_CREATED)
 def add(db:db_dependency, device:DeviceBase):
@@ -185,204 +249,85 @@ def edit(db:db_dependency, id:int, device:DeviceUpdate):
     return db_device
 
 
-"""if db_device.type == "camera":
-            db_device = models.Devices(**device.__dict__)
-            db.add(db_device)
-            db.commit()
+@app.post("/add/patchpanel", status_code=status.HTTP_201_CREATED)
+def add_patch_panel(db:db_dependency, patch_panel:PatchPanelBase):
+    try:
+        db_patch_panel = models.PatchPanels(**patch_panel.__dict__)
+        db.add(db_patch_panel)
+        db.commit()
+        db.refresh(db_patch_panel)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Patch panel already exists")
 
-        elif db_device.type == "telephone":
-            db_device = models.Telos(**device.__dict__)
-            db.add(db_device)
-            db.commit()
+    patch_panel_ports = [models.PatchPanelPorts(port_number=i, patch_panel_id=db_patch_panel.id, title=f"{db_patch_panel.title}-{i}") for i in range(1, 25)]
+    db.add_all(patch_panel_ports)
+    db.commit()
+    return db_patch_panel
 
-        elif db_device.type == "nursing":
-            db_device = models.Nursing(**device.__dict__)
-            db.add(db_device)
-            db.commit()
+@app.post("/add/switch", status_code=status.HTTP_201_CREATED)
+def add_switch(db:db_dependency, switch:SwitchBase):
+    try:
+        db_switch = models.Switches(**switch.__dict__)
+        db.add(db_switch)
+        db.commit()
+        db.refresh(db_switch)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Switch with same unique fields already exists")
+    ports = [models.Ports(port_number=i, switch_id=db_switch.id) for i in range(1, db_switch.total_ports + 1)]
+    db.add_all(ports)
+    db.commit()
+    return db_switch
 
-        elif db_device.type == "access_point":
-            db_device = models.AccessPoints(**device.__dict__)
-            db.add(db_device)
-            db.commit()
-        
-        elif db_device.type == "access_door":
-            db_device = models.Cabinet(**device.__dict__)
-            db.add(db_device)
-            db.commit()"""
+@app.put("/edit/patchpanel/{id}", status_code=status.HTTP_200_OK)
+def edit_patch_panel(db:db_dependency, id:int, patch_panel:PatchPanelBase):
+    db_patch_panel = db.query(models.PatchPanels).filter(models.PatchPanels.id == id).first()
+    if db_patch_panel is None:
+        raise HTTPException(status_code=404 , detail='Patch Panel not found')
 
-        #else:
-            #raise HTTPException(status_code=404 , detail='There is No Devices!')
-# @app.get("/fetch/{type}",status_code=status.HTTP_200_OK)
-# """
-#     This route is used to fetch devices based on their type.
-#     :param db: The database session object.
-#     :param type: The type of devices to fetch.
-#     :return: The list of devices matching the provided type.
-# """
-"""
-async def full_fetch(db:db_dependency, type:str):
-
-    devices = db.query(models.Devices).filter(models.Devices.type == type).all()
-    if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
+    for key, value in patch_panel.__dict__.items():
+        setattr(db_patch_panel, key, value)
     
-    #working = []
-    #not_working = []
-    listofips = []
-    for device in devices:
-        if device.IP != "":
-            ping_ip = os.system("ping -n 1 -w 10 " + device.IP)
-            if ping_ip ==0:
-                device.show = True
-            else:
-                device.show = False 
-                listofips.append(device.IP)
-    print(listofips)
-    return devices
-"""
+    db.commit()
+    db.refresh(db_patch_panel)
+    return db_patch_panel
 
-"""@app.get("/fetch/camera/{filter}", status_code=status.HTTP_200_OK)
-def camera_fetch(filter:str, db:db_dependency):
-     
+@app.put("/edit/switch/{id}", status_code=status.HTTP_200_OK)
+def edit_switch(db:db_dependency, id:int, switch:SwitchBase):
+    db_switch = db.query(models.Switches).filter(models.Switches.id == id).first()
+    if db_switch is None:
+        raise HTTPException(status_code=404 , detail='Switch not found')
 
-        devices_mac = db.query(models.Devices).filter(models.Devices.Mac == filter).filter(models.Devices.type == "camera").all()
-        devices_ip = db.query(models.Devices).filter(models.Devices.IP == filter).filter(models.Devices.type == "camera").all()
-        devices_model = db.query(models.Devices).filter(models.Devices.model == filter).filter(models.Devices.type == "camera").all()
-        devices_place = db.query(models.Devices).filter(models.Devices.place == filter).filter(models.Devices.type == "camera").all()
-        devices = devices_mac + devices_ip + devices_model + devices_place
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        
-        for device in devices:
-            if device.IP != "":
-                
-                ping_ip = os.system("ping -n 1 -w 90 -l 8 "+device.IP) 
-                if ping_ip == 0:
-                     device.show = True
-                else:
-                     device.show = False
-                     
-
-     
-        return devices
-
-"""
-"""@app.get("/fetch/telephone/{filter}", status_code=status.HTTP_200_OK)
-def telo_fetch(filter:str, db:db_dependency):
-     
-
-        devices_mac = db.query(models.Devices).filter(models.Devices.Mac == filter).filter(models.Devices.type == "telephone").all()
-        devices_ip = db.query(models.Devices).filter(models.Devices.IP == filter).filter(models.Devices.type == "telephone").all()
-        devices_model = db.query(models.Devices).filter(models.Devices.model == filter).filter(models.Devices.type == "telephone").all()
-        devices_place = db.query(models.Devices).filter(models.Devices.place == filter).filter(models.Devices.type == "telephone").all()
-        devices = devices_mac + devices_ip + devices_model + devices_place
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
-
-@app.get("/fetch/AccesssPoint/{filter}", status_code=status.HTTP_200_OK)
-def ac_fetch(filter:str, db:db_dependency):
-     
-
-        devices_mac = db.query(models.Devices).filter(models.Devices.Mac == filter).filter(models.Devices.type == "accesspoint").all()
-        devices_ip = db.query(models.Devices).filter(models.Devices.IP == filter).filter(models.Devices.type == "accesspoint").all()
-        devices_model = db.query(models.Devices).filter(models.Devices.model == filter).filter(models.Devices.type == "accesspoint").all()
-        devices_place = db.query(models.Devices).filter(models.Devices.place == filter).filter(models.Devices.type == "accesspoint").all()
-        devices = devices_mac + devices_ip + devices_model + devices_place
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
-
-
-@app.get("/fetch/nursing/{filter}", status_code=status.HTTP_200_OK)
-def nursing_fetch(filter:str, db:db_dependency):
-     
-
-        devices_mac = db.query(models.Devices).filter(models.Devices.Mac == filter).filter(models.Devices.type == "nursing").all()
-        devices_ip = db.query(models.Devices).filter(models.Devices.IP == filter).filter(models.Devices.type == "nursing").all()
-        devices_model = db.query(models.Devices).filter(models.Devices.model == filter).filter(models.Devices.type == "nursing").all()
-        devices_place = db.query(models.Devices).filter(models.Devices.place == filter).filter(models.Devices.type == "nursing").all()
-        devices = devices_mac + devices_ip + devices_model + devices_place
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
-
-
-@app.get("/fetch/cabinet/{filter}", status_code=status.HTTP_200_OK)
-def cabinet_fetch(filter:str, db:db_dependency):
-     
-
-        devices_mac = db.query(models.Devices).filter(models.Devices.Mac == filter).filter(models.Devices.type == "cabinet").all()
-        devices_ip = db.query(models.Devices).filter(models.Devices.IP == filter).filter(models.Devices.type == "cabinet").all()
-        devices_model = db.query(models.Devices).filter(models.Devices.model == filter).filter(models.Devices.type == "cabinet").all()
-        devices_place = db.query(models.Devices).filter(models.Devices.place == filter).filter(models.Devices.type == "cabinet").all()
-        devices = devices_mac + devices_ip + devices_model + devices_place
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
-
-
-@app.get("/fetch/{filter}", status_code=status.HTTP_200_OK)
-def fetch_Devices(filter:str, db:db_dependency):
-     
-
-        devices_mac = db.query(models.Devices).filter(models.Devices.Mac == filter).all()
-        devices_ip = db.query(models.Devices).filter(models.Devices.IP == filter).all()
-        devices_model = db.query(models.Devices).filter(models.Devices.model == filter).all()
-        devices_place = db.query(models.Devices).filter(models.Devices.place == filter).all()
-        devices = devices_mac + devices_ip + devices_model + devices_place
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
-
-
-@app.get("/fetch_mac/{mac}", status_code=status.HTTP_200_OK)
-def fetch_Devices(mac:str, db:db_dependency):
-     
-
-        devices = db.query(models.Devices).filter(models.Devices.Mac == mac).all()
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
+    for key, value in switch.__dict__.items():
+        setattr(db_switch, key, value)
     
+    db.commit()
+    db.refresh(db_switch)
+    return db_switch
 
-@app.get("/fetch_ip/{ip}", status_code=status.HTTP_200_OK)
-def fetch_Devices(ip:str, db:db_dependency):
-     
+@app.put("/edit/patchpanel/{id}", status_code=status.HTTP_200_OK)
+def edit_patch_panel(db:db_dependency, id:int, patch_panel:PatchPanelBase):
+    db_patch_panel = db.query(models.PatchPanels).filter(models.PatchPanels.id == id).first()
+    if db_patch_panel is None:
+        raise HTTPException(status_code=404 , detail='Patch Panel not found')
 
-        devices = db.query(models.Devices).filter(models.Devices.IP == ip).all()
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
+    for key, value in patch_panel.__dict__.items():
+        setattr(db_patch_panel, key, value)
     
+    db.commit()
+    db.refresh(db_patch_panel)
+    return db_patch_panel
 
-@app.get("/fetch_place/{place}", status_code=status.HTTP_200_OK)
-def fetch_Devices(place:str, db:db_dependency):
-     
 
-        devices = db.query(models.Devices).filter(models.Devices.place == place).all()
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
     
-
-@app.get("/fetch_model/{model}", status_code=status.HTTP_200_OK)
-def fetch_Devices(model:str, db:db_dependency):
-     
-
-        devices = db.query(models.Devices).filter(models.Devices.model == model).all()
-        if devices is None:
-            raise HTTPException(status_code=404 , detail='There is No Devices!')
-        return devices
-
- """   
 #this code is just for running the fastapi project without trying to use uvicorn from the terminal .... :)
 app.add_middleware(
-CORSMiddleware,
-allow_origins=["*"],
-allow_credentials=True,
-allow_methods=["*"],
-allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 if __name__ == "__main__":

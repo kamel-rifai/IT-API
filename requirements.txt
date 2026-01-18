@@ -5,3 +5,4 @@ uvicorn
 passlib[bcrypt]
 icmplib
 PyMySQL
+RouterOS-api
