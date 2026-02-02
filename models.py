@@ -6,7 +6,7 @@ from db import Base
 
 
 class Devices(Base):
-    __tablename__ = "devices"
+    __tablename__ = "DEVICES"
 
     id= Column(Integer, primary_key=True, index=True)
     type = Column(String(100))
@@ -14,6 +14,7 @@ class Devices(Base):
     model = Column(String(120))
     floor = Column(Integer)
     place = Column(String(100))
+    cableNumber = Column(String(100))
     Mac = Column(String(100))
     IP = Column(String(100))
     Notes = Column(String(120))
@@ -38,6 +39,9 @@ class Switches(Base):
     Notes = Column(String(120))
     show = Column(Boolean)
     active = Column(Boolean)
+    POE = Column(Boolean)
+    total_fiber_ports = Column(Integer)
+    fiber_ports = relationship('FiberPorts', back_populates='switch', cascade='all, delete-orphan')
     ports = relationship('Ports', back_populates='switch', cascade='all, delete-orphan')
     created_at = Column(Date, default=datetime.now)
     updated_at = Column(Date, default=datetime.now, onupdate=datetime.now)
@@ -55,7 +59,8 @@ class PatchPanels(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(100), unique=False)
-    unique_id = Column(String(50), unique=True)
+    unique_id = Column(String(50), unique=True, nullable=True)
+    floor = Column(Integer)
     show = Column(Boolean)
     created_at = Column(Date, default=datetime.now)
     updated_at = Column(Date, default=datetime.now, onupdate=datetime.now)
@@ -76,8 +81,11 @@ class PatchPanelPorts(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String(100), unique=False, nullable=True)
     port_number = Column(Integer)
+    cable_number = Column(String(100))
+    cable_length = Column(String(100))
+    function = Column(String(100))
     patch_panel_id = Column(Integer, ForeignKey('patchpanels.id'))
-    switch_port_id = Column(Integer, ForeignKey('ports.id'), nullable=True)
+    switch_port_id = Column(Integer, ForeignKey('ports.id'), nullable=True, unique=True)
 
     patch_panel = relationship('PatchPanels', back_populates='ports')
     switch_port = relationship('Ports')
@@ -91,15 +99,22 @@ class Ports(Base):
     port_number = Column(Integer)
     title = Column(String(100), nullable=True)
     switch_id = Column(Integer, ForeignKey('switches.id'))
-    device_id = Column(Integer, ForeignKey('devices.id'), nullable=True, unique=True)
+    device_id = Column(Integer, ForeignKey('DEVICES.id'), nullable=True, unique=True)
     switch = relationship('Switches', back_populates='ports')
     device = relationship('Devices', back_populates='port')
+    patch_panel_port = relationship('PatchPanelPorts', back_populates='switch_port', uselist=False)
 
 
     created_at = Column(Date, default=datetime.now)
     updated_at = Column(Date, default=datetime.now, onupdate=datetime.now)
 
-
+class FiberPorts(Base):
+    __tablename__ = "fiber_ports"
+    id = Column(Integer, primary_key=True)
+    title = Column(String(100), unique=True, nullable=True)
+    port_number = Column(Integer)
+    switch_id = Column('fiber_id', Integer, ForeignKey('switches.id'))
+    switch = relationship('Switches', back_populates='fiber_ports')
 
 class Cameras(Base):
     __tablename__ = "CAMERAS"
