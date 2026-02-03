@@ -754,6 +754,30 @@ def auto_assign_ports(switch_id: int, db: db_dependency):
     }
     }
 
+@app.post("/off/{device_id}")
+def turn_off_device(device_id: int, db: db_dependency):
+    device = db.query(models.Devices).filter(models.Devices.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    
+    if not device.IP:
+        raise HTTPException(status_code=400, detail="Device has no IP address")
+    
+    try:
+        api_pool = RouterOsApiPool(
+            host=device.IP,
+            username="admin",
+            password="555288",
+            plaintext_login=True
+        )
+        api = api_pool.get_api()
+        resource = api.get_resource('/interface/ethernet/poe')
+        api_pool.disconnect() 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"API Connection Error: {str(e)}")
+    
+    return {"detail": f"Shutdown command sent to device {device.name}"}
+
 
 #this code is just for running the fastapi project without trying to use uvicorn from the terminal .... :)
 app.add_middleware(
